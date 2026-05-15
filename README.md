@@ -2,6 +2,8 @@
 
 A frameless, always-on-top Windows overlay for controlling **master volume** and **per-app volume** while gaming. Like Windows' Volume Mixer, but it sits over your game.
 
+![preview](preview.png)
+
 ## Features
 
 - **Master + per-app volume sliders** — drag to adjust live
