@@ -92,7 +92,10 @@ def palette(cfg: dict) -> dict:
 class AudioController:
     def __init__(self) -> None:
         devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        # pycaw >= 20240210 wraps the raw COM device in an AudioDevice;
+        # fall back to the bare object for older versions.
+        raw = getattr(devices, "_dev", devices)
+        interface = raw.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
         self.master = cast(interface, POINTER(IAudioEndpointVolume))
 
     def get_master(self) -> float:
