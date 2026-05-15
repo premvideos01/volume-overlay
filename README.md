@@ -1,8 +1,18 @@
 # Volume Overlay
 
-A frameless, always-on-top Windows overlay for controlling **master volume** and **per-app volume** while gaming. Like Windows' Volume Mixer, but it sits over your game.
+A frameless, always-on-top Windows overlay for controlling **master volume** and **per-app volume** while gaming. Looks like the native Windows 11 Volume Mixer — but it sits over your game.
 
 ![preview](preview.png)
+
+## Quick start (Windows)
+
+Just want the .exe? Double-click `build_exe.bat` once and it will:
+1. Install the build tools
+2. Compile `VolumeOverlay.exe`
+3. **Create a folder on your Desktop called `VolumeOverlay`** containing the .exe
+4. Open that folder for you
+
+Then double-click `VolumeOverlay.exe` to launch. To autostart on login, drop a shortcut into `shell:startup`.
 
 ## Features
 

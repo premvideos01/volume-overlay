@@ -1,10 +1,6 @@
 """
-Volume Overlay
-==============
-A frameless, always-on-top Windows overlay for controlling master + per-app
-volume while gaming. Movable, lockable, transparency + color customization.
-
-Requires: Windows 10/11, Python 3.9+, pycaw, comtypes.
+Volume Overlay — Windows 11 styled.
+Frameless, always-on-top overlay for master + per-app volume.
 """
 from __future__ import annotations
 
@@ -25,17 +21,37 @@ except ImportError:
 
 CONFIG_PATH = Path.home() / ".volume_overlay.json"
 
+# Windows 11 Fluent palettes
+THEMES = {
+    "dark": {
+        "bg": "#202020",
+        "surface": "#2b2b2b",
+        "border": "#3a3a3a",
+        "accent": "#60cdff",
+        "text": "#ffffff",
+        "muted": "#a0a0a0",
+        "track": "#454545",
+    },
+    "light": {
+        "bg": "#f3f3f3",
+        "surface": "#fbfbfb",
+        "border": "#e5e5e5",
+        "accent": "#0078d4",
+        "text": "#1c1c1c",
+        "muted": "#5a5a5a",
+        "track": "#d0d0d0",
+    },
+}
+
 DEFAULTS = {
-    "alpha": 0.85,
-    "bg": "#14141c",
-    "accent": "#7c5cff",
-    "text": "#f0f0f5",
-    "muted": "#8888a0",
+    "alpha": 0.95,
+    "theme": "dark",
+    "accent": None,           # None = use theme default
     "x": 80,
     "y": 80,
     "locked": False,
     "selected_apps": ["__master__"],
-    "width": 280,
+    "width": 320,
 }
 
 
@@ -57,9 +73,16 @@ def save_config(cfg: dict) -> None:
         print(f"save_config failed: {exc}")
 
 
-class AudioController:
-    """Thin wrapper around pycaw for master + per-app volume."""
+def palette(cfg: dict) -> dict:
+    """Return effective color palette (theme + optional accent override)."""
+    p = dict(THEMES[cfg.get("theme", "dark")])
+    if cfg.get("accent"):
+        p["accent"] = cfg["accent"]
+    return p
 
+
+# ---------------- Audio ----------------
+class AudioController:
     def __init__(self) -> None:
         devices = AudioUtilities.GetSpeakers()
         interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
@@ -69,8 +92,13 @@ class AudioController:
         return float(self.master.GetMasterVolumeLevelScalar())
 
     def set_master(self, v: float) -> None:
-        v = max(0.0, min(1.0, v))
-        self.master.SetMasterVolumeLevelScalar(v, None)
+        self.master.SetMasterVolumeLevelScalar(max(0.0, min(1.0, v)), None)
+
+    def master_muted(self) -> bool:
+        return bool(self.master.GetMute())
+
+    def set_master_mute(self, muted: bool) -> None:
+        self.master.SetMute(1 if muted else 0, None)
 
     def list_sessions(self) -> list[dict]:
         seen: dict[str, dict] = {}
@@ -96,128 +124,195 @@ class AudioController:
             if s.Process and s.Process.name() == name:
                 s.SimpleAudioVolume.SetMasterVolume(v, None)
 
+    def app_muted(self, name: str) -> bool | None:
+        for s in AudioUtilities.GetAllSessions():
+            if s.Process and s.Process.name() == name:
+                return bool(s.SimpleAudioVolume.GetMute())
+        return None
 
+    def set_app_mute(self, name: str, muted: bool) -> None:
+        for s in AudioUtilities.GetAllSessions():
+            if s.Process and s.Process.name() == name:
+                s.SimpleAudioVolume.SetMute(1 if muted else 0, None)
+
+
+# ---------------- Overlay ----------------
 class VolumeOverlay:
     def __init__(self) -> None:
         self.cfg = load_config()
         self.audio = AudioController()
+        self.p = palette(self.cfg)
 
         self.root = tk.Tk()
-        self.root.title("Volume Overlay")
+        self.root.title("Volume Mixer")
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", self.cfg["alpha"])
-        self.root.geometry(f"{self.cfg['width']}x300+{self.cfg['x']}+{self.cfg['y']}")
-        self.root.configure(bg=self.cfg["bg"])
+        self.root.geometry(f"{self.cfg['width']}x340+{self.cfg['x']}+{self.cfg['y']}")
+        self.root.configure(bg=self.p["bg"])
 
         self._drag = {"x": 0, "y": 0, "active": False}
-        self.sliders: dict[str, tuple[ttk.Scale, tk.StringVar]] = {}
+        self.rows: dict[str, dict] = {}
         self.settings_win: tk.Toplevel | None = None
 
         self._build_ui()
         self._poll()
 
-    # ---------------- UI build ----------------
+    # ---------------- UI ----------------
     def _build_ui(self) -> None:
-        cfg = self.cfg
-        self.frame = tk.Frame(self.root, bg=cfg["bg"], padx=12, pady=10,
-                              highlightthickness=1, highlightbackground=cfg["accent"])
-        self.frame.pack(fill="both", expand=True)
+        p = self.p
 
-        # ---- Header (drag handle) ----
-        self.header = tk.Frame(self.frame, bg=cfg["bg"])
-        self.header.pack(fill="x", pady=(0, 8))
+        # Card with subtle border (Win11 style)
+        self.card = tk.Frame(
+            self.root, bg=p["bg"], padx=14, pady=12,
+            highlightthickness=1, highlightbackground=p["border"])
+        self.card.pack(fill="both", expand=True)
+
+        # Header
+        self.header = tk.Frame(self.card, bg=p["bg"])
+        self.header.pack(fill="x", pady=(0, 10))
 
         self.title_lbl = tk.Label(
-            self.header, text="🔊 Volume", fg=cfg["accent"], bg=cfg["bg"],
-            font=("Segoe UI", 11, "bold"))
+            self.header, text="Volume Mixer", fg=p["text"], bg=p["bg"],
+            font=("Segoe UI Variable Display", 12, "bold"))
         self.title_lbl.pack(side="left")
 
-        self.close_btn = tk.Label(
-            self.header, text="✕", fg=cfg["muted"], bg=cfg["bg"],
-            font=("Segoe UI", 11), cursor="hand2")
-        self.close_btn.pack(side="right", padx=(4, 0))
-        self.close_btn.bind("<Button-1>", lambda e: self.shutdown())
+        # window-control buttons (Win11-ish)
+        self.close_btn = self._make_chrome_btn("✕", self.shutdown)
+        self.close_btn.pack(side="right")
+        self.lock_btn = self._make_chrome_btn(
+            "🔒" if self.cfg["locked"] else "🔓", self.toggle_lock)
+        self.lock_btn.pack(side="right", padx=2)
+        self.gear_btn = self._make_chrome_btn("⚙", self.open_settings)
+        self.gear_btn.pack(side="right", padx=2)
 
-        self.lock_btn = tk.Label(
-            self.header, text="🔒" if cfg["locked"] else "🔓",
-            fg=cfg["muted"], bg=cfg["bg"],
-            font=("Segoe UI", 11), cursor="hand2")
-        self.lock_btn.pack(side="right", padx=4)
-        self.lock_btn.bind("<Button-1>", lambda e: self.toggle_lock())
-
-        self.gear_btn = tk.Label(
-            self.header, text="⚙", fg=cfg["muted"], bg=cfg["bg"],
-            font=("Segoe UI", 12), cursor="hand2")
-        self.gear_btn.pack(side="right", padx=4)
-        self.gear_btn.bind("<Button-1>", lambda e: self.open_settings())
-
-        for w in (self.frame, self.header, self.title_lbl):
+        for w in (self.card, self.header, self.title_lbl):
             w.bind("<ButtonPress-1>", self._start_drag)
             w.bind("<B1-Motion>", self._do_drag)
             w.bind("<ButtonRelease-1>", self._stop_drag)
 
-        # ---- Sliders container ----
-        self.sliders_frame = tk.Frame(self.frame, bg=cfg["bg"])
-        self.sliders_frame.pack(fill="x")
-        self._build_sliders()
+        # Sliders container
+        self.rows_frame = tk.Frame(self.card, bg=p["bg"])
+        self.rows_frame.pack(fill="x")
+        self._build_rows()
 
-    def _build_sliders(self) -> None:
-        for w in self.sliders_frame.winfo_children():
+    def _make_chrome_btn(self, text, cmd):
+        p = self.p
+        lbl = tk.Label(self.header, text=text, fg=p["muted"], bg=p["bg"],
+                       font=("Segoe UI", 10), cursor="hand2",
+                       padx=6, pady=2)
+        lbl.bind("<Button-1>", lambda e: cmd())
+        lbl.bind("<Enter>", lambda e: lbl.configure(bg=p["surface"], fg=p["text"]))
+        lbl.bind("<Leave>", lambda e: lbl.configure(bg=p["bg"], fg=p["muted"]))
+        return lbl
+
+    def _build_rows(self) -> None:
+        for w in self.rows_frame.winfo_children():
             w.destroy()
-        self.sliders.clear()
+        self.rows.clear()
+        p = self.p
 
-        cfg = self.cfg
+        # ttk slider style: thin track, accent fill
         style = ttk.Style()
         try:
             style.theme_use("default")
         except tk.TclError:
             pass
-        style.configure("Vol.Horizontal.TScale",
-                        background=cfg["bg"], troughcolor="#2a2a3a",
-                        bordercolor=cfg["bg"], lightcolor=cfg["accent"],
-                        darkcolor=cfg["accent"])
+        style.configure(
+            "Win11.Horizontal.TScale",
+            background=p["bg"], troughcolor=p["track"],
+            bordercolor=p["bg"], lightcolor=p["accent"],
+            darkcolor=p["accent"], sliderlength=12, sliderthickness=12,
+        )
 
-        for name in self.cfg["selected_apps"]:
+        any_added = False
+        for idx, name in enumerate(self.cfg["selected_apps"]):
             if name == "__master__":
-                display = "Master"
+                display = "Speakers / Master"
                 cur = self.audio.get_master()
+                muted = self.audio.master_muted()
+                icon = "🔊"
             else:
                 v = self.audio.get_app_volume(name)
                 if v is None:
-                    continue  # app not running right now
-                display = name.replace(".exe", "")
+                    continue
+                display = name.replace(".exe", "").title()
                 cur = v
+                muted = self.audio.app_muted(name) or False
+                icon = self._app_icon(name)
 
-            row = tk.Frame(self.sliders_frame, bg=cfg["bg"])
+            if idx > 0 and any_added:
+                tk.Frame(self.rows_frame, bg=p["border"], height=1).pack(
+                    fill="x", pady=6)
+
+            row = tk.Frame(self.rows_frame, bg=p["bg"])
             row.pack(fill="x", pady=3)
+            any_added = True
 
-            label_row = tk.Frame(row, bg=cfg["bg"])
-            label_row.pack(fill="x")
-            tk.Label(label_row, text=display, fg=cfg["text"], bg=cfg["bg"],
-                     font=("Segoe UI", 9, "bold"), anchor="w").pack(side="left")
-            pct_var = tk.StringVar(value=f"{int(cur * 100)}%")
-            tk.Label(label_row, textvariable=pct_var, fg=cfg["accent"],
-                     bg=cfg["bg"], font=("Segoe UI", 9)).pack(side="right")
+            top = tk.Frame(row, bg=p["bg"])
+            top.pack(fill="x")
+            tk.Label(top, text=icon, fg=p["text"], bg=p["bg"],
+                     font=("Segoe UI Emoji", 12)).pack(side="left")
+            tk.Label(top, text=display, fg=p["text"], bg=p["bg"],
+                     font=("Segoe UI", 10), padx=8).pack(side="left")
+            pct_var = tk.StringVar(value=f"{int(cur * 100)}")
+            tk.Label(top, textvariable=pct_var, fg=p["muted"], bg=p["bg"],
+                     font=("Segoe UI", 10)).pack(side="right")
 
-            scale = ttk.Scale(row, from_=0, to=100, orient="horizontal",
-                              style="Vol.Horizontal.TScale")
+            bottom = tk.Frame(row, bg=p["bg"])
+            bottom.pack(fill="x", pady=(4, 0))
+
+            mute_var = tk.BooleanVar(value=muted)
+            mute_lbl = tk.Label(bottom, text="🔇" if muted else "🔈",
+                                fg=p["muted"] if muted else p["text"],
+                                bg=p["bg"], font=("Segoe UI Emoji", 11),
+                                cursor="hand2")
+            mute_lbl.pack(side="left", padx=(0, 6))
+
+            scale = ttk.Scale(bottom, from_=0, to=100, orient="horizontal",
+                              style="Win11.Horizontal.TScale")
             scale.set(int(cur * 100))
-            scale.pack(fill="x", pady=(2, 0))
-            scale.configure(command=lambda v, n=name, pv=pct_var: self._on_scale(n, v, pv))
-            self.sliders[name] = (scale, pct_var)
+            scale.pack(side="left", fill="x", expand=True)
 
-        # Empty hint
-        if not self.sliders:
-            tk.Label(self.sliders_frame,
-                     text="No volumes selected.\nClick ⚙ to pick apps.",
-                     fg=self.cfg["muted"], bg=cfg["bg"],
-                     font=("Segoe UI", 9), justify="center").pack(pady=20)
+            scale.configure(
+                command=lambda v, n=name, pv=pct_var: self._on_scale(n, v, pv))
+
+            def toggle_mute(n=name, ml=mute_lbl, mv=mute_var):
+                mv.set(not mv.get())
+                ml.configure(text="🔇" if mv.get() else "🔈",
+                             fg=p["muted"] if mv.get() else p["text"])
+                if n == "__master__":
+                    self.audio.set_master_mute(mv.get())
+                else:
+                    self.audio.set_app_mute(n, mv.get())
+            mute_lbl.bind("<Button-1>", lambda e, t=toggle_mute: t())
+
+            self.rows[name] = {
+                "scale": scale, "pct": pct_var,
+                "mute_lbl": mute_lbl, "mute_var": mute_var,
+            }
+
+        if not self.rows:
+            tk.Label(self.rows_frame,
+                     text="No apps selected.\nClick ⚙ → tick the apps you want.",
+                     fg=p["muted"], bg=p["bg"],
+                     font=("Segoe UI", 9), justify="center").pack(pady=24)
+
+    def _app_icon(self, name: str) -> str:
+        """Pick an emoji-ish hint per common app type."""
+        n = name.lower()
+        if "discord" in n:  return "💬"
+        if "spotify" in n:  return "🎵"
+        if "chrome" in n or "firefox" in n or "msedge" in n: return "🌐"
+        if "valorant" in n or "league" in n or "cs" in n or "overwatch" in n: return "🎮"
+        if "obs" in n: return "🎥"
+        if "vlc" in n or "media" in n: return "▶"
+        return "📱"
 
     # ---------------- Slider handler ----------------
-    def _on_scale(self, name: str, value, pct_var: tk.StringVar) -> None:
+    def _on_scale(self, name, value, pct_var) -> None:
         v = float(value) / 100.0
-        pct_var.set(f"{int(v * 100)}%")
+        pct_var.set(f"{int(v * 100)}")
         try:
             if name == "__master__":
                 self.audio.set_master(v)
@@ -250,7 +345,7 @@ class VolumeOverlay:
             save_config(self.cfg)
         self._drag["active"] = False
 
-    def toggle_lock(self) -> None:
+    def toggle_lock(self):
         self.cfg["locked"] = not self.cfg["locked"]
         self.lock_btn.configure(text="🔒" if self.cfg["locked"] else "🔓")
         save_config(self.cfg)
@@ -258,147 +353,173 @@ class VolumeOverlay:
     # ---------------- Poll for external changes ----------------
     def _poll(self) -> None:
         try:
-            for name, (scale, pct_var) in list(self.sliders.items()):
+            for name, r in list(self.rows.items()):
                 v = self.audio.get_master() if name == "__master__" else self.audio.get_app_volume(name)
                 if v is None:
                     continue
                 target = int(v * 100)
-                cur = int(scale.get())
-                if abs(cur - target) > 2:  # avoid fighting user drag
-                    scale.set(target)
-                    pct_var.set(f"{target}%")
+                cur = int(r["scale"].get())
+                if abs(cur - target) > 2:
+                    r["scale"].set(target)
+                    r["pct"].set(f"{target}")
         except Exception:
             pass
         self.root.after(1000, self._poll)
 
     # ---------------- Settings ----------------
-    def open_settings(self) -> None:
+    def open_settings(self):
         if self.settings_win and self.settings_win.winfo_exists():
             self.settings_win.lift()
             return
-
-        cfg = self.cfg
+        p = self.p
         win = tk.Toplevel(self.root)
         self.settings_win = win
-        win.title("Volume Overlay — Settings")
-        win.configure(bg=cfg["bg"])
-        win.geometry("380x560")
+        win.title("Settings")
+        win.configure(bg=p["bg"])
+        win.geometry("400x600")
         win.attributes("-topmost", True)
 
+        def section(title):
+            tk.Label(win, text=title, fg=p["text"], bg=p["bg"],
+                     font=("Segoe UI Variable Display", 11, "bold")
+                     ).pack(anchor="w", padx=18, pady=(14, 6))
+
+        # Theme
+        section("Appearance")
+        theme_row = tk.Frame(win, bg=p["bg"])
+        theme_row.pack(fill="x", padx=18, pady=2)
+        tk.Label(theme_row, text="Theme", fg=p["text"], bg=p["bg"],
+                 font=("Segoe UI", 10)).pack(side="left")
+        theme_var = tk.StringVar(value=self.cfg["theme"])
+        combo = ttk.Combobox(theme_row, values=["dark", "light"],
+                             textvariable=theme_var, state="readonly", width=10)
+        combo.pack(side="right")
+        combo.bind("<<ComboboxSelected>>",
+                   lambda e: self._set_theme(theme_var.get()))
+
         # Transparency
-        tk.Label(win, text="Transparency", fg=cfg["text"], bg=cfg["bg"],
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(14, 4))
-        alpha_pct_lbl = tk.Label(win, text=f"{int(cfg['alpha'] * 100)}%",
-                                 fg=cfg["accent"], bg=cfg["bg"])
-        alpha_pct_lbl.pack(anchor="e", padx=14)
-        alpha_scale = ttk.Scale(win, from_=20, to=100, orient="horizontal")
-        alpha_scale.set(cfg["alpha"] * 100)
-        alpha_scale.pack(fill="x", padx=14)
+        tk.Label(win, text="Transparency", fg=p["text"], bg=p["bg"],
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=18, pady=(10, 0))
+        alpha_pct = tk.Label(win, text=f"{int(self.cfg['alpha']*100)}%",
+                             fg=p["accent"], bg=p["bg"])
+        alpha_pct.pack(anchor="e", padx=18)
+        a = ttk.Scale(win, from_=20, to=100, orient="horizontal")
+        a.set(self.cfg["alpha"] * 100)
+        a.pack(fill="x", padx=18)
 
-        def on_alpha(v):
-            a = float(v) / 100.0
-            cfg["alpha"] = a
-            self.root.attributes("-alpha", a)
-            alpha_pct_lbl.configure(text=f"{int(a * 100)}%")
-            save_config(cfg)
-        alpha_scale.configure(command=on_alpha)
+        def on_a(v):
+            self.cfg["alpha"] = float(v) / 100.0
+            self.root.attributes("-alpha", self.cfg["alpha"])
+            alpha_pct.configure(text=f"{int(self.cfg['alpha']*100)}%")
+            save_config(self.cfg)
+        a.configure(command=on_a)
 
-        # Colors
-        tk.Label(win, text="Colors", fg=cfg["text"], bg=cfg["bg"],
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(14, 4))
+        # Accent color
+        tk.Label(win, text="Accent color", fg=p["text"], bg=p["bg"],
+                 font=("Segoe UI", 10)).pack(anchor="w", padx=18, pady=(10, 0))
+        acc_row = tk.Frame(win, bg=p["bg"])
+        acc_row.pack(fill="x", padx=18, pady=4)
+        sw = tk.Frame(acc_row, bg=self.p["accent"], width=30, height=22,
+                      bd=1, relief="solid")
+        sw.pack(side="left")
 
-        swatches: dict[str, tk.Frame] = {}
-        for key, label in [("bg", "Background"), ("accent", "Accent"), ("text", "Text")]:
-            row = tk.Frame(win, bg=cfg["bg"])
-            row.pack(fill="x", padx=14, pady=2)
-            tk.Label(row, text=label, fg=cfg["text"], bg=cfg["bg"],
-                     font=("Segoe UI", 9)).pack(side="left")
-            swatch = tk.Frame(row, bg=cfg[key], width=28, height=20,
-                              bd=1, relief="solid")
-            swatch.pack(side="right", padx=6)
-            swatches[key] = swatch
+        def pick_acc():
+            _, color = colorchooser.askcolor(initialcolor=self.p["accent"], parent=win)
+            if color:
+                self.cfg["accent"] = color
+                sw.configure(bg=color)
+                save_config(self.cfg)
+                self._refresh_theme()
+        tk.Button(acc_row, text="Pick", command=pick_acc,
+                  bg=p["surface"], fg=p["text"], bd=1,
+                  relief="solid", padx=10).pack(side="left", padx=8)
 
-            def pick(k=key, sw=swatch):
-                _, color = colorchooser.askcolor(initialcolor=cfg[k], parent=win)
-                if color:
-                    cfg[k] = color
-                    sw.configure(bg=color)
-                    save_config(cfg)
-                    self._apply_colors()
-            tk.Button(row, text="Pick", command=pick,
-                      bg=cfg["bg"], fg=cfg["text"], bd=1,
-                      relief="solid", padx=8).pack(side="right")
+        def reset_acc():
+            self.cfg["accent"] = None
+            sw.configure(bg=palette(self.cfg)["accent"])
+            save_config(self.cfg)
+            self._refresh_theme()
+        tk.Button(acc_row, text="Reset", command=reset_acc,
+                  bg=p["surface"], fg=p["muted"], bd=1,
+                  relief="solid", padx=10).pack(side="left")
 
-        # App selector
-        tk.Label(win, text="Visible Volumes", fg=cfg["text"], bg=cfg["bg"],
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=14, pady=(14, 0))
-        tk.Label(win, text="Tick which sliders to show on the overlay.",
-                 fg=cfg["muted"], bg=cfg["bg"],
-                 font=("Segoe UI", 8)).pack(anchor="w", padx=14)
+        # App picker
+        section("Visible Apps")
+        tk.Label(win, text="Choose which volumes appear on the overlay.",
+                 fg=p["muted"], bg=p["bg"],
+                 font=("Segoe UI", 9)).pack(anchor="w", padx=18)
 
-        list_frame = tk.Frame(win, bg=cfg["bg"])
-        list_frame.pack(fill="both", expand=True, padx=14, pady=4)
+        list_frame = tk.Frame(win, bg=p["bg"])
+        list_frame.pack(fill="both", expand=True, padx=18, pady=8)
 
-        canvas = tk.Canvas(list_frame, bg=cfg["bg"], highlightthickness=0, height=200)
+        canvas = tk.Canvas(list_frame, bg=p["bg"], highlightthickness=0, height=180)
         scroll = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
-        inner = tk.Frame(canvas, bg=cfg["bg"])
-        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        inner = tk.Frame(canvas, bg=p["bg"])
+        inner.bind("<Configure>",
+                   lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=scroll.set)
         canvas.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
 
-        items = [("__master__", "Master")] + [(s["name"], s["name"]) for s in self.audio.list_sessions()]
-        check_vars: dict[str, tk.BooleanVar] = {}
+        items = [("__master__", "Speakers / Master")] + \
+                [(s["name"], s["name"]) for s in self.audio.list_sessions()]
+        cvars: dict[str, tk.BooleanVar] = {}
         for name, display in items:
-            var = tk.BooleanVar(value=name in cfg["selected_apps"])
+            var = tk.BooleanVar(value=name in self.cfg["selected_apps"])
             tk.Checkbutton(inner, text=display, variable=var,
-                           bg=cfg["bg"], fg=cfg["text"],
-                           selectcolor=cfg["bg"],
-                           activebackground=cfg["bg"],
-                           activeforeground=cfg["text"],
-                           font=("Segoe UI", 9), anchor="w"
-                           ).pack(anchor="w", fill="x")
-            check_vars[name] = var
+                           bg=p["bg"], fg=p["text"],
+                           selectcolor=p["surface"],
+                           activebackground=p["bg"],
+                           activeforeground=p["text"],
+                           font=("Segoe UI", 10), anchor="w"
+                           ).pack(anchor="w", fill="x", pady=1)
+            cvars[name] = var
 
-        btn_row = tk.Frame(win, bg=cfg["bg"])
-        btn_row.pack(fill="x", padx=14, pady=10)
+        btn_row = tk.Frame(win, bg=p["bg"])
+        btn_row.pack(fill="x", padx=18, pady=12)
 
         def apply():
-            cfg["selected_apps"] = [n for n, v in check_vars.items() if v.get()]
-            if not cfg["selected_apps"]:
-                cfg["selected_apps"] = ["__master__"]
-            save_config(cfg)
-            self._build_sliders()
+            self.cfg["selected_apps"] = [n for n, v in cvars.items() if v.get()]
+            if not self.cfg["selected_apps"]:
+                self.cfg["selected_apps"] = ["__master__"]
+            save_config(self.cfg)
+            self._build_rows()
 
         tk.Button(btn_row, text="Apply", command=apply,
-                  bg=cfg["accent"], fg="white", bd=0,
+                  bg=self.p["accent"], fg="white", bd=0,
                   font=("Segoe UI", 10, "bold"),
-                  padx=20, pady=6).pack(side="left")
-        tk.Button(btn_row, text="Refresh app list",
-                  command=lambda: (win.destroy(), self.open_settings()),
-                  bg=cfg["bg"], fg=cfg["muted"], bd=0,
-                  font=("Segoe UI", 9)).pack(side="right")
+                  padx=22, pady=7).pack(side="left")
+        tk.Button(btn_row, text="Refresh", command=lambda: (win.destroy(), self.open_settings()),
+                  bg=p["surface"], fg=p["text"], bd=1, relief="solid",
+                  padx=14, pady=6).pack(side="right")
 
-    # ---------------- Theming ----------------
-    def _apply_colors(self) -> None:
-        cfg = self.cfg
-        self.root.configure(bg=cfg["bg"])
-        self.frame.configure(bg=cfg["bg"], highlightbackground=cfg["accent"])
-        self.header.configure(bg=cfg["bg"])
-        self.title_lbl.configure(fg=cfg["accent"], bg=cfg["bg"])
-        self.close_btn.configure(bg=cfg["bg"], fg=cfg["muted"])
-        self.lock_btn.configure(bg=cfg["bg"], fg=cfg["muted"])
-        self.gear_btn.configure(bg=cfg["bg"], fg=cfg["muted"])
-        self.sliders_frame.configure(bg=cfg["bg"])
-        self._build_sliders()
+    def _set_theme(self, theme: str):
+        self.cfg["theme"] = theme
+        save_config(self.cfg)
+        self._refresh_theme()
+
+    def _refresh_theme(self):
+        self.p = palette(self.cfg)
+        p = self.p
+        self.root.configure(bg=p["bg"])
+        self.card.configure(bg=p["bg"], highlightbackground=p["border"])
+        self.header.configure(bg=p["bg"])
+        self.title_lbl.configure(fg=p["text"], bg=p["bg"])
+        for btn in (self.close_btn, self.lock_btn, self.gear_btn):
+            btn.configure(bg=p["bg"], fg=p["muted"])
+        self.rows_frame.configure(bg=p["bg"])
+        self._build_rows()
+        if self.settings_win and self.settings_win.winfo_exists():
+            self.settings_win.destroy()
+            self.open_settings()
 
     # ---------------- Lifecycle ----------------
-    def shutdown(self) -> None:
+    def shutdown(self):
         save_config(self.cfg)
         self.root.destroy()
 
-    def run(self) -> None:
+    def run(self):
         self.root.mainloop()
 
 
