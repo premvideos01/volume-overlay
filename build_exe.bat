@@ -11,7 +11,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt pyinstaller
 
 REM 2) Build the .exe (single file, no console window)
-pyinstaller --noconfirm --onefile --windowed ^
+python -m PyInstaller --noconfirm --onefile --windowed ^
     --name VolumeOverlay ^
     --hidden-import=comtypes.stream ^
     --hidden-import=pynput.keyboard._win32 ^
