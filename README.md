@@ -1,75 +1,75 @@
 # Volume Overlay
 
-A frameless, always-on-top Windows overlay for controlling **master volume** and **per-app volume** while gaming. Looks like the native Windows 11 Volume Mixer — but it sits over your game.
+Pin the **native Windows Volume Mixer** on top of your game.
 
-![preview](preview.png)
+Instead of a custom UI, this uses Windows' own `sndvol.exe` (the classic volume mixer with master + per-app vertical sliders) and adds:
+
+- 📌 **Always-on-top** — sits over fullscreen-borderless games
+- 🌫️ **Transparency** — slider from 40% to 100%
+- 🔒 **Lock position** — snaps the mixer back if anything tries to move it
+- ⌨️ **Ctrl + H** — global hotkey to show/hide while gaming
+- 👁 **Show / Hide** button on the floating control panel
 
 ## Quick start (Windows)
 
-Just want the .exe? Double-click `build_exe.bat` once and it will:
+Double-click `build_exe.bat`. It will:
 1. Install the build tools
 2. Compile `VolumeOverlay.exe`
-3. **Create a folder on your Desktop called `VolumeOverlay`** containing the .exe
-4. Open that folder for you
+3. **Create `Desktop\VolumeOverlay\`** with the .exe inside
+4. Open that folder in Explorer
 
-Then double-click `VolumeOverlay.exe` to launch. To autostart on login, drop a shortcut into `shell:startup`.
+Then double-click `VolumeOverlay.exe`. The Windows Volume Mixer pops up, gets pinned on top, and a small dark control panel appears next to it.
 
-## Features
+To autostart on login, drop a shortcut to `VolumeOverlay.exe` into `shell:startup`.
 
-- **Master + per-app volume sliders** — drag to adjust live
-- **Visible volume picker** — choose which apps appear on the overlay (Game + Master, Discord only, all four, whatever)
-- **Movable** — drag the header anywhere on screen
-- **Lock toggle** — 🔒/🔓 button keeps it from being dragged accidentally
-- **Transparency slider** — 20%–100%
-- **Color customization** — background, accent, text
-- **Position + settings persist** — saved to `~/.volume_overlay.json`
-- **External-change sync** — if you change volume in Windows directly, the overlay catches up
-
-## Requirements
-
-- Windows 10 or 11
-- Python 3.9+
-
-## Install + Run (Python)
+## Run from source (no build)
 
 ```bat
 pip install -r requirements.txt
 python volume_overlay.py
 ```
 
-## Build a standalone .exe
-
-Run `build_exe.bat` on Windows. It produces `dist\VolumeOverlay.exe` — a single file, no Python install needed on the target machine.
-
-```bat
-build_exe.bat
-```
-
 ## Controls
 
-| Button / Key | Action |
+| Action | How |
 | --- | --- |
-| **Ctrl + H** | **Show / hide the overlay** (global hotkey, works while gaming) |
-| ⚙ | Settings (transparency, colors, app picker, theme) |
-| 🔒 / 🔓 | Lock position |
-| ✕ | Close |
-| Drag header | Move overlay (when unlocked) |
-| Click 🔈 / 🔇 | Mute / unmute that row |
+| Show / hide mixer | **Ctrl + H** (or the 👁 button) |
+| Adjust transparency | Slider on control panel |
+| Lock mixer in place | 🔓 / 🔒 button on control panel |
+| Move control panel | Drag the header |
+| Quit | ✕ on control panel |
 
-## Settings menu
+## How it works
 
-- **Transparency** — slider from 20% (mostly see-through) to 100% (opaque)
-- **Colors** — background, accent, text (color picker)
-- **Visible Volumes** — checkboxes for Master + every running app with audio. Pick which sliders appear on the overlay.
-- **Refresh app list** — rescan for new apps (e.g. after launching your game)
+- Launches `sndvol.exe` if it's not already running
+- Finds the Volume Mixer window via Win32 `FindWindow` / `EnumWindows`
+- Calls `SetWindowPos(HWND_TOPMOST)` to pin it
+- Calls `SetLayeredWindowAttributes` for transparency
+- A 1-second watchdog re-pins it and (if locked) snaps it back to saved position
+- Hotkey handled by `pynput`'s `GlobalHotKeys` on a daemon thread
 
 ## Config file
 
-Settings are saved to `%USERPROFILE%\.volume_overlay.json`. Delete it to reset to defaults.
+Settings live at `%USERPROFILE%\.volume_overlay.json`:
 
-## Why Python instead of C#?
+```json
+{
+  "alpha": 95,
+  "locked": false,
+  "lock_x": null,
+  "lock_y": null,
+  "hotkey": "<ctrl>+h",
+  "panel_x": 30,
+  "panel_y": 30
+}
+```
 
-Python + `pycaw` gives full Core Audio access (same APIs Windows uses internally), the script is one file, and it ships as a ~20 MB exe via PyInstaller. C#/WPF would be more native but a much bigger project for the same result.
+Delete it to reset to defaults.
+
+## Notes
+
+- The classic mixer (`sndvol.exe`) ships with all Windows versions including Windows 11. On Win11 the speaker icon now opens the Settings-app mixer; this tool uses the classic one directly.
+- Works with **borderless-windowed** or **windowed** games. Exclusive-fullscreen will cover any overlay (Windows limitation, not ours).
 
 ## License
 
