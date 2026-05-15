@@ -14,6 +14,8 @@ REM 2) Build the .exe (single file, no console window)
 pyinstaller --noconfirm --onefile --windowed ^
     --name VolumeOverlay ^
     --hidden-import=comtypes.stream ^
+    --hidden-import=pynput.keyboard._win32 ^
+    --hidden-import=pynput.mouse._win32 ^
     volume_overlay.py
 
 if not exist "dist\VolumeOverlay.exe" (

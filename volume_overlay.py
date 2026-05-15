@@ -15,8 +15,14 @@ try:
     from ctypes import POINTER, cast
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 except ImportError:
-    print("Missing dependencies. Run:  pip install pycaw comtypes")
+    print("Missing dependencies. Run:  pip install pycaw comtypes pynput")
     sys.exit(1)
+
+try:
+    from pynput import keyboard as kb
+    _HAS_PYNPUT = True
+except ImportError:
+    _HAS_PYNPUT = False
 
 
 CONFIG_PATH = Path.home() / ".volume_overlay.json"
@@ -52,6 +58,7 @@ DEFAULTS = {
     "locked": False,
     "selected_apps": ["__master__"],
     "width": 320,
+    "hotkey": "<ctrl>+h",
 }
 
 
@@ -154,9 +161,12 @@ class VolumeOverlay:
         self._drag = {"x": 0, "y": 0, "active": False}
         self.rows: dict[str, dict] = {}
         self.settings_win: tk.Toplevel | None = None
+        self._hidden = False
+        self._hotkey_listener = None
 
         self._build_ui()
         self._poll()
+        self._start_hotkey()
 
     # ---------------- UI ----------------
     def _build_ui(self) -> None:
@@ -172,10 +182,17 @@ class VolumeOverlay:
         self.header = tk.Frame(self.card, bg=p["bg"])
         self.header.pack(fill="x", pady=(0, 10))
 
+        title_wrap = tk.Frame(self.header, bg=p["bg"])
+        title_wrap.pack(side="left")
         self.title_lbl = tk.Label(
-            self.header, text="Volume Mixer", fg=p["text"], bg=p["bg"],
+            title_wrap, text="Volume Mixer", fg=p["text"], bg=p["bg"],
             font=("Segoe UI Variable Display", 12, "bold"))
         self.title_lbl.pack(side="left")
+        hotkey_hint = self.cfg["hotkey"].replace("<", "").replace(">", "").replace("+", "+").title()
+        self.hotkey_lbl = tk.Label(
+            title_wrap, text=f"  {hotkey_hint}", fg=p["muted"], bg=p["bg"],
+            font=("Segoe UI", 9))
+        self.hotkey_lbl.pack(side="left")
 
         # window-control buttons (Win11-ish)
         self.close_btn = self._make_chrome_btn("✕", self.shutdown)
@@ -186,7 +203,7 @@ class VolumeOverlay:
         self.gear_btn = self._make_chrome_btn("⚙", self.open_settings)
         self.gear_btn.pack(side="right", padx=2)
 
-        for w in (self.card, self.header, self.title_lbl):
+        for w in (self.card, self.header, self.title_lbl, self.hotkey_lbl):
             w.bind("<ButtonPress-1>", self._start_drag)
             w.bind("<B1-Motion>", self._do_drag)
             w.bind("<ButtonRelease-1>", self._stop_drag)
@@ -506,6 +523,7 @@ class VolumeOverlay:
         self.card.configure(bg=p["bg"], highlightbackground=p["border"])
         self.header.configure(bg=p["bg"])
         self.title_lbl.configure(fg=p["text"], bg=p["bg"])
+        self.hotkey_lbl.configure(fg=p["muted"], bg=p["bg"])
         for btn in (self.close_btn, self.lock_btn, self.gear_btn):
             btn.configure(bg=p["bg"], fg=p["muted"])
         self.rows_frame.configure(bg=p["bg"])
@@ -514,9 +532,42 @@ class VolumeOverlay:
             self.settings_win.destroy()
             self.open_settings()
 
+    # ---------------- Global hotkey ----------------
+    def _start_hotkey(self):
+        if not _HAS_PYNPUT:
+            print("pynput not installed — global hotkey disabled.")
+            return
+        try:
+            self._stop_hotkey()
+            self._hotkey_listener = kb.GlobalHotKeys({
+                self.cfg["hotkey"]: lambda: self.root.after(0, self._toggle_visibility),
+            })
+            self._hotkey_listener.daemon = True
+            self._hotkey_listener.start()
+        except Exception as exc:
+            print(f"hotkey setup failed: {exc}")
+
+    def _stop_hotkey(self):
+        if self._hotkey_listener is not None:
+            try:
+                self._hotkey_listener.stop()
+            except Exception:
+                pass
+            self._hotkey_listener = None
+
+    def _toggle_visibility(self):
+        if self._hidden:
+            self.root.deiconify()
+            self.root.attributes("-topmost", True)
+            self.root.lift()
+        else:
+            self.root.withdraw()
+        self._hidden = not self._hidden
+
     # ---------------- Lifecycle ----------------
     def shutdown(self):
         save_config(self.cfg)
+        self._stop_hotkey()
         self.root.destroy()
 
     def run(self):

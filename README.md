@@ -47,12 +47,14 @@ build_exe.bat
 
 ## Controls
 
-| Button | Action |
+| Button / Key | Action |
 | --- | --- |
-| ⚙ | Settings (transparency, colors, app picker) |
+| **Ctrl + H** | **Show / hide the overlay** (global hotkey, works while gaming) |
+| ⚙ | Settings (transparency, colors, app picker, theme) |
 | 🔒 / 🔓 | Lock position |
 | ✕ | Close |
 | Drag header | Move overlay (when unlocked) |
+| Click 🔈 / 🔇 | Mute / unmute that row |
 
 ## Settings menu
 
